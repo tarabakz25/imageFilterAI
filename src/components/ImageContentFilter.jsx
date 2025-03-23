@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import OpenAI from 'openai'
 
 // インラインスタイル
@@ -146,7 +146,59 @@ const styles = {
         listStyleType: 'disc',
         paddingLeft: '1.25rem',
         marginTop: '0.25rem',
+    },
+    warningBox: {
+        width: '100%',
+        backgroundColor: '#fefcbf',
+        border: '1px solid #ecc94b',
+        color: '#744210',
+        padding: '0.75rem 1rem',
+        borderRadius: '0.25rem',
+        marginBottom: '1.5rem',
+    },
+    infoBox: {
+        width: '100%',
+        backgroundColor: '#e6f6ff',
+        border: '1px solid #3182ce',
+        color: '#2c5282',
+        padding: '0.75rem 1rem',
+        borderRadius: '0.25rem',
+        marginBottom: '1.5rem',
+    },
+    apiKeyWarning: {
+        color: '#e53e3e',
+        fontSize: '0.875rem',
+        marginTop: '0.25rem',
+    },
+    debugInfo: {
+        fontSize: '0.75rem',
+        color: '#718096',
+        marginTop: '0.5rem',
+        padding: '0.5rem',
+        backgroundColor: '#f7fafc',
+        borderRadius: '0.25rem',
+        border: '1px solid #e2e8f0',
+        fontFamily: 'monospace',
+        whiteSpace: 'pre-wrap',
+        display: 'none', // デフォルトでは非表示
+    },
+    limitInfo: {
+        fontSize: '0.75rem',
+        color: '#718096',
+        marginTop: '0.25rem',
     }
+};
+
+// API呼び出しの安全性チェックを行う関数
+const isSecureContext = () => {
+    return window.location.protocol === 'https:' || 
+           window.location.hostname === 'localhost' || 
+           window.location.hostname === '127.0.0.1';
+};
+
+// APIキーが適切なパターンかチェックする関数
+const isValidApiKeyFormat = (key) => {
+    return key && /^sk-[a-zA-Z0-9]{48}$/.test(key);
 };
 
 const ImageContentFilter = () => {
@@ -156,22 +208,62 @@ const ImageContentFilter = () => {
     const [analysing, setAnalysing] = useState(false)
     const [result, setResult] = useState(null)
     const [apiKey, setApiKey] = useState('')
-    const [model, setModel] = useState('gpt-4-vision-preview')
+    const [model, setModel] = useState('gpt-4o')
     const [error, setError] = useState(null)
+    const [warning, setWarning] = useState(null)
+    const [requestCount, setRequestCount] = useState(0)
+    const [isEnvApiKey, setIsEnvApiKey] = useState(false)
+    const [securityContext, setSecurityContext] = useState(true)
+
+    // 環境変数からAPIキーの有無をチェック
+    useEffect(() => {
+        // ReactのAPIKEYの有無を確認
+        const envApiKey = process.env.REACT_APP_OPENAI_API_KEY;
+        if (envApiKey) {
+            setApiKey(envApiKey);
+            setIsEnvApiKey(true);
+        }
+        
+        // セキュアなコンテキストかどうかをチェック
+        setSecurityContext(isSecureContext());
+        
+        if (!isSecureContext()) {
+            setWarning('セキュアでない接続（非HTTPS）でアプリを実行しています。本番環境では必ずHTTPS接続を使用してください。');
+        }
+    }, []);
+
+    // APIキーが変更されたときに検証
+    useEffect(() => {
+        if (apiKey && !isValidApiKeyFormat(apiKey)) {
+            setWarning('入力されたAPIキーの形式が正しくありません。OpenAIのAPIキーは"sk-"で始まり、その後に英数字が続きます。');
+        } else {
+            setWarning(null);
+        }
+    }, [apiKey]);
 
     const handleImageChange = (e) => {
         const file = e.target.files?.[0]
         if (file) {
+            // ファイルサイズの制限（20MB）
+            if (file.size > 20 * 1024 * 1024) {
+                setError('ファイルサイズが大きすぎます（上限：20MB）。より小さな画像を選択してください。');
+                return;
+            }
+
             setImage(file)
             const url = URL.createObjectURL(file)
             setPreview(url)
             setResult(null)
+            setError(null)
             
             // Base64エンコーディング
             const reader = new FileReader()
             reader.onloadend = () => {
                 const base64 = reader.result
                 setBase64Image(base64)
+            }
+            reader.onerror = () => {
+                setError('画像の読み込み中にエラーが発生しました。別の画像を試してください。');
             }
             reader.readAsDataURL(file)
         }
@@ -182,6 +274,10 @@ const ImageContentFilter = () => {
         setError(null)
         
         try {
+            if (requestCount >= 10) {
+                throw new Error('リクエスト回数の上限に達しました。しばらく時間をおいてから再試行してください。');
+            }
+
             const prompt = `
             この画像を分析し、以下の点について評価してください:
             1. この画像はインターネット上で公開するのに適切か？
@@ -198,16 +294,29 @@ const ImageContentFilter = () => {
             `
 
             if (!base64Image) {
-                throw new Error('画像が選択されていないか、画像の処理が完了していません')
+                throw new Error('画像が選択されていないか、画像の処理が完了していません');
             }
 
+            if (!apiKey) {
+                throw new Error('OpenAI APIキーが必要です。自分のAPIキーを入力するか、環境変数で設定してください。');
+            }
+
+            // APIキー処理時のセキュリティ対策
+            let effectiveApiKey = apiKey;
+            
+            // API呼び出し
             const openai = new OpenAI({
-                apiKey: apiKey || process.env.API_KEY,
+                apiKey: effectiveApiKey,
                 dangerouslyAllowBrowser: true
-            })
+            });
+
+            // APIコール前の最終確認
+            if (!securityContext) {
+                throw new Error('セキュアでない環境でAPIを呼び出すことはできません。HTTPS接続を使用してください。');
+            }
 
             const response = await openai.chat.completions.create({
-                model: model || "gpt-4-vision-preview",
+                model: model,
                 messages: [
                     {
                         role: "user",
@@ -218,47 +327,84 @@ const ImageContentFilter = () => {
                     }
                 ],
                 max_tokens: 400,
-            })
+            });
 
-            const content = response.choices[0].message.content
+            // リクエストカウントを増やす
+            setRequestCount(prevCount => prevCount + 1);
+
+            const content = response.choices[0].message.content;
             if (!content) {
-                throw new Error('APIからの応答が空です')
+                throw new Error('APIからの応答が空です');
             }
 
             try {
-                const jsonMatch = content.match(/```json\s*([\s\S]*)```/) || content.match(/\{[\s\S]*\}/)
+                // JSONパース処理を改善
+                const jsonMatch = content.match(/```json\s*([\s\S]*?)```/) || content.match(/\{[\s\S]*\}/);
                 if (!jsonMatch) {
-                    throw new Error('JSONデータが見つかりません')
+                    throw new Error('JSONデータが見つかりません: ' + content.substring(0, 100) + '...');
                 }
                 
-                let jsonContent = jsonMatch[1] || jsonMatch[0]
-                jsonContent = jsonContent.replace(/```json\s*|\s*```/g, '').trim()
+                let jsonContent = jsonMatch[1] || jsonMatch[0];
+                jsonContent = jsonContent.replace(/```json\s*|\s*```/g, '').trim();
 
-                const parsedResult = JSON.parse(jsonContent)
-                setResult(parsedResult)
+                // JSONパース前に構文を検証
+                if (!jsonContent.startsWith('{') || !jsonContent.endsWith('}')) {
+                    throw new Error('JSONの形式が不正です: ' + jsonContent.substring(0, 100) + '...');
+                }
+
+                const parsedResult = JSON.parse(jsonContent);
+                
+                // 必要なフィールドがあるか検証
+                if (typeof parsedResult.safe !== 'boolean') {
+                    throw new Error('応答にsafeフィールドがないか、正しくありません');
+                }
+                
+                // 欠落したフィールドを補完
+                if (!parsedResult.confidence) parsedResult.confidence = 0.5;
+                if (!parsedResult.reasoning) parsedResult.reasoning = "理由は提供されていません";
+                if (!parsedResult.issues) parsedResult.issues = [];
+
+                setResult(parsedResult);
             } catch (error) {
-                console.error('JSONパースエラー:', error)
-                setError(`JSONパースエラー: ${error instanceof Error ? error.message : '不明なエラー'}`)
+                console.error('JSONパースエラー:', error);
+                setError(`JSONパースエラー: ${error instanceof Error ? error.message : '不明なエラー'}`);
             }
         } catch (error) {
-            console.error('APIエラー:', error)
-            setError(`APIエラー: ${error instanceof Error ? error.message : '不明なエラー'}`)
+            console.error('APIエラー:', error);
+            setError(`APIエラー: ${error instanceof Error ? error.message : '不明なエラー'}`);
         } finally {
-            setAnalysing(false)
+            setAnalysing(false);
         }
-    }
+    };
 
     const resetForm = () => {
-        setImage(null)
-        setPreview(null)
-        setBase64Image(null)
-        setResult(null)
-        setError(null)
-    }
+        setImage(null);
+        setPreview(null);
+        setBase64Image(null);
+        setResult(null);
+        setError(null);
+        
+        // APIキーは環境変数から取得した場合はリセットしない
+        if (!isEnvApiKey) {
+            setApiKey('');
+        }
+    };
 
     return (
         <div style={styles.container}>
         <h1 style={styles.title}>画像評価・フィルタリングアプリ</h1>
+        
+        {warning && (
+            <div style={styles.warningBox}>
+                <strong>注意:</strong> {warning}
+            </div>
+        )}
+
+        {!securityContext && (
+            <div style={styles.warningBox}>
+                <strong>セキュリティ警告:</strong> 現在、セキュアでない接続を使用しています。本番環境では必ずHTTPS接続を使用してください。
+            </div>
+        )}
         
         {/* API設定セクション */}
         <div style={styles.section}>
@@ -269,10 +415,25 @@ const ImageContentFilter = () => {
             <input
                 type="password"
                 value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
+                onChange={(e) => {
+                    setApiKey(e.target.value);
+                    setIsEnvApiKey(false);
+                }}
                 placeholder="sk-..."
                 style={styles.input}
+                disabled={isEnvApiKey}
             />
+            {isEnvApiKey && (
+                <p style={styles.smallText}>
+                    ✓ 環境変数からAPIキーを読み込みました
+                </p>
+            )}
+            {!isEnvApiKey && (
+                <p style={styles.apiKeyWarning}>
+                    ⚠️ APIキーをクライアントサイドで使用することはセキュリティリスクがあります。本番環境では、
+                    バックエンドプロキシを使用することを強く推奨します。
+                </p>
+            )}
             <p style={styles.smallText}>
                 ※APIキーはクライアント側でのみ使用され、サーバーには保存されません
             </p>
@@ -289,6 +450,10 @@ const ImageContentFilter = () => {
                 <option value="gpt-4o-mini">GPT-4o Mini</option>
             </select>
             </div>
+            
+            <p style={styles.limitInfo}>
+                残りリクエスト回数: {10 - requestCount}/10
+            </p>
         </div>
         
         {/* 画像アップロードセクション */}
@@ -301,6 +466,9 @@ const ImageContentFilter = () => {
                 onChange={handleImageChange}
                 style={styles.input}
             />
+            <p style={styles.smallText}>
+                最大ファイルサイズ: 20MB、対応形式: JPG, PNG, GIF, WEBP
+            </p>
             </div>
             
             {preview && (
@@ -315,8 +483,8 @@ const ImageContentFilter = () => {
             <div style={styles.buttonContainer}>
             <button
                 onClick={analyzeImage}
-                disabled={!image || !apiKey || analysing}
-                style={!image || !apiKey || analysing ? styles.buttonDisabled : styles.buttonPrimary}
+                disabled={!image || !apiKey || analysing || requestCount >= 10}
+                style={!image || !apiKey || analysing || requestCount >= 10 ? styles.buttonDisabled : styles.buttonPrimary}
             >
                 {analysing ? '分析中...' : '画像を分析'}
             </button>
@@ -388,9 +556,20 @@ const ImageContentFilter = () => {
             このアプリでは、アップロードされた画像がネット上での使用に適しているかをOpenAI APIを使用して評価します。
             分析にはユーザー自身のAPIキーが必要です。
             </p>
+            
+            <div style={styles.infoBox}>
+                <strong>🔒 セキュリティのベストプラクティス:</strong>
+                <ul style={{...styles.list, marginTop: '0.5rem'}}>
+                    <li>APIキーは環境変数（.envファイル内の<code>REACT_APP_OPENAI_API_KEY</code>）で設定することを推奨します</li>
+                    <li>本番環境では、APIキーを保護するためのバックエンドプロキシを使用してください</li>
+                    <li>常にHTTPS接続を使用し、APIキーが公開リポジトリに含まれないようにしてください</li>
+                    <li>APIキーの使用状況を定期的に監視し、不正使用がないか確認してください</li>
+                </ul>
+            </div>
+            
             <p style={{...styles.paragraphText, marginTop: '0.5rem'}}>
-            <strong>セキュリティについて:</strong> APIキーはクライアントサイドでのみ使用され、サーバーには保存されません。
-            プロダクション環境では、APIキーの取り扱いにはより安全なバックエンド連携が推奨されます。
+            <strong>本番環境での推奨設定:</strong> APIキーの取り扱いにはバックエンドプロキシの使用が推奨されます。
+            これによりクライアント側からAPIキーが漏洩するリスクを軽減できます。
             </p>
         </div>
         </div>

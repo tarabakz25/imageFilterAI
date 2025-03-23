@@ -1,4 +1,143 @@
-# Getting Started with Create React App
+# 画像評価・フィルタリングアプリ
+
+OpenAI VisionモデルAPIを使用して、画像がインターネット上での公開に適しているかを評価するアプリケーションです。アップロードされた画像を分析し、不適切なコンテンツが含まれているかどうかを判断します。
+
+![アプリのスクリーンショット](https://placeholder-for-screenshot.png)
+
+## 主な機能
+
+- 画像のアップロードと内容の自動分析
+- 不適切なコンテンツ（暴力、ヌード、グロテスクな表現など）の検出
+- 分析結果のJSON形式での取得
+- 安全性評価のスコアリングと詳細な判断理由の表示
+
+## セットアップと実行方法
+
+### 前提条件
+
+- Node.js 18.x以上
+- OpenAI APIキー
+
+### インストール
+
+```bash
+# リポジトリをクローン
+git clone https://github.com/yourusername/image-filter-ai.git
+cd image-filter-ai
+
+# 依存関係のインストール
+npm install
+```
+
+### 環境変数の設定
+
+1. `.env.example`ファイルを`.env`にコピーします：
+```bash
+cp .env.example .env
+```
+
+2. `.env`ファイルを編集し、OpenAI APIキーを設定します：
+```
+REACT_APP_OPENAI_API_KEY=your-openai-api-key
+```
+
+### 開発モードでの実行
+
+```bash
+npm start
+```
+
+アプリは[http://localhost:3000](http://localhost:3000)で実行されます。
+
+### 本番ビルドの作成
+
+```bash
+npm run build
+```
+
+## セキュリティのベストプラクティス
+
+このアプリケーションを使用・デプロイする際は、以下のセキュリティベストプラクティスに従うことを強く推奨します：
+
+### APIキーの保護
+
+1. **環境変数の使用**: OpenAI APIキーは環境変数を使用して管理してください。
+
+2. **バックエンドプロキシ**: 本番環境では、APIキーを保護するためのバックエンドプロキシを実装してください。以下は簡単なNode.jsプロキシの例です：
+
+```javascript
+// server.js
+const express = require('express');
+const { createProxyMiddleware } = require('http-proxy-middleware');
+require('dotenv').config();
+
+const app = express();
+
+// 静的ファイル配信
+app.use(express.static('build'));
+
+// OpenAI APIへのプロキシ
+app.use('/api/openai', createProxyMiddleware({
+  target: 'https://api.openai.com',
+  changeOrigin: true,
+  pathRewrite: {
+    '^/api/openai': '/v1',
+  },
+  onProxyReq: (proxyReq) => {
+    // サーバー側でAPIキーを追加
+    proxyReq.setHeader('Authorization', `Bearer ${process.env.OPENAI_API_KEY}`);
+  },
+}));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+```
+
+3. **HTTPS接続**: 常にHTTPS接続を使用してください。
+
+### デプロイ方法
+
+#### Vercelへのデプロイ（推奨）
+
+1. GitHubリポジトリと連携
+2. 環境変数に`REACT_APP_OPENAI_API_KEY`を設定
+3. プロジェクトをインポートして自動デプロイ
+
+#### Netlifyへのデプロイ
+
+```bash
+npm install -g netlify-cli
+netlify deploy
+```
+
+環境変数はNetlifyダッシュボードで設定してください。
+
+#### バックエンドプロキシを使用したデプロイ (Heroku)
+
+```bash
+# Herokuにデプロイ
+heroku create
+git push heroku main
+
+# 環境変数を設定
+heroku config:set OPENAI_API_KEY=your-api-key
+```
+
+## 本番環境での考慮事項
+
+1. **レート制限**: OpenAI APIのレート制限に注意してください。
+2. **コスト管理**: APIの使用状況とコストを継続的に監視してください。
+3. **エラーハンドリング**: ロバストなエラーハンドリングと再試行メカニズムを実装してください。
+
+## ライセンス
+
+MITライセンス
+
+---
+
+## Create React App 標準ドキュメント
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
