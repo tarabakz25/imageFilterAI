@@ -285,7 +285,6 @@ const ImageContentFilter = () => {
                 onChange={(e) => setModel(e.target.value)}
                 style={styles.input}
             >
-                <option value="gpt-4-vision-preview">GPT-4 Vision</option>
                 <option value="gpt-4o">GPT-4o</option>
                 <option value="gpt-4o-mini">GPT-4o Mini</option>
             </select>
